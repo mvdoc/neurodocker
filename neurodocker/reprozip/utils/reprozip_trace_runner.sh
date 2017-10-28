@@ -10,58 +10,78 @@
 # this script.
 
 set -e
-set -x
+# set -x
 
-REPROZIP_CONDA=/opt/reprozip-miniconda
-REPROZIP_TRACE_DIR=/neurodocker-reprozip-trace
-CONDA_URL=https://repo.continuum.io/miniconda/Miniconda3-latest-Linux-x86_64.sh
+REPROZIP_CONDA=/opt/neurodocker-reprozip-miniconda
+REPROZIP_TRACE_DIR="$(mktemp -d -p $HOME neurodocker-reprozip-trace-XXXX)"
+rmdir "$REPROZIP_TRACE_DIR"  # reprozip complains if directory exists.
+
 # This log prefix is used in trace.py.
 NEURODOCKER_LOG_PREFIX="NEURODOCKER (in container)"
 
 
-function program_exists()
-{
+function log_info() {
+  echo "${NEURODOCKER_LOG_PREFIX}: $@"
+}
+
+function log_err() {
+  echo "${NEURODOCKER_LOG_PREFIX}: $@" >&2
+}
+
+function program_exists() {
   hash "$1" 2>/dev/null;
 }
 
-
-function install_missing_dependencies()
-{
+function system_install() {
   if program_exists "apt-get"; then
-    echo "${NEURODOCKER_LOG_PREFIX}: installing $1 with apt-get"
+    log_info "installing $@ with apt-get"
     apt-get update -qq
-    apt-get install -yq $1
+    apt-get install -yq --no-install-recommends $@
   elif program_exists "yum"; then
-    echo "${NEURODOCKER_LOG_PREFIX}: installing $1 with yum"
-    yum install -y -q $1
+    log_info "installing $@ with yum"
+    yum install -y -q $@
   else
-    echo "${NEURODOCKER_LOG_PREFIX}: cannot install $1 (error using apt-get and then yum)."
-    exit 1;
-  fi;
+    log_err "cannot install $@ (error using apt-get and then yum)."
+    exit 1
+  fi
 }
 
+function install_dependencies() {
+  TO_INSTALL=""
+  for PKG in bzip2 curl; do
+    if ! program_exists $PKG; then
+      TO_INSTALL="$TO_INSTALL $PKG"
+    fi
+  done
+  if [ -n "$TO_INSTALL" ]; then
+    system_install $TO_INSTALL
+  fi
+}
 
-function install_conda_reprozip()
-{
+function _install_conda_reprozip() {
+  CONDA_URL=https://repo.continuum.io/miniconda/Miniconda3-latest-Linux-x86_64.sh
   TMP_CONDA_INSTALLER=/tmp/miniconda.sh
-  ls /tmp
   curl -sSL -o "$TMP_CONDA_INSTALLER" "$CONDA_URL"
-  ls /tmp
   bash $TMP_CONDA_INSTALLER -b -p $REPROZIP_CONDA
   rm -f $TMP_CONDA_INSTALLER
-  ${REPROZIP_CONDA}/bin/conda install -yq --channel vida-nyu python=3.5 reprozip
+  ${REPROZIP_CONDA}/bin/conda install -yq -n root -c vida-nyu python=3.5 reprozip
+  ${REPROZIP_CONDA}/bin/conda clean -tipsy
 }
 
+function install_conda_reprozip() {
+  if [ -f ${REPROZIP_CONDA}/bin/reprozip ]; then
+    log_info "using installed ReproZip."
+  else
+    log_info "installing dedicated Miniconda and ReproZip"
+    _install_conda_reprozip
+  fi
+}
 
-function run_reprozip_trace()
-{
-  # https://askubuntu.com/a/674347
+function run_reprozip_trace() {
   cmds=("$@")
   reprozip_base_cmd="${REPROZIP_CONDA}/bin/reprozip trace -d ${REPROZIP_TRACE_DIR} --dont-identify-packages"
 
-  for cmd in "${cmds[@]}";
-  do
-    # Only add --continue if it is not the first command.
+  for cmd in "${cmds[@]}"; do
     if [ "$cmd" == "${cmds[0]}" ]; then
         continue_=""
     else
@@ -69,40 +89,35 @@ function run_reprozip_trace()
     fi
 
     reprozip_cmd="${reprozip_base_cmd} ${continue_} ${cmd}"
-    printf "${NEURODOCKER_LOG_PREFIX}: executing command:\t${reprozip_cmd}\n"
+    log_info "executing command: ${reprozip_cmd}"
     $reprozip_cmd
+    err_code="$?"
+    if [ "$err_code" != 0 ]; then
+      log_err "command returned non-zero error code: $err_code"
+      exit 1
+    fi
   done
 }
 
+function main() {
+  if [ ${#*} -eq 0 ]; then
+    log_err "no arguments provided"
+    exit 1
+  fi
 
-if [ ${#*} -eq 0 ]; then
-  echo "${NEURODOCKER_LOG_PREFIX}: error: no arguments found."
-  exit 1
-fi
-
-if [ -d $REPROZIP_TRACE_DIR ]; then
-  echo "${NEURODOCKER_LOG_PREFIX}: error: reprozip trace directory already exists: ${REPROZIP_TRACE_DIR}"
-  exit 1
-fi
-
-
-install_missing_dependencies "bzip2 curl"
-
-
-if [ ! -f "${REPROZIP_CONDA}/bin/reprozip" ]; then
-  echo "${NEURODOCKER_LOG_PREFIX}: installing dedicated Miniconda and ReproZip."
+  install_dependencies
   install_conda_reprozip
-else
-  echo "${NEURODOCKER_LOG_PREFIX}: using installed reprozip."
-fi
 
-# Run reprozip trace.
-echo "${NEURODOCKER_LOG_PREFIX}: running reprozip trace command(s)"
-run_reprozip_trace "$@"
+  # Run reprozip trace.
+  log_info "running reprozip trace command(s)"
+  run_reprozip_trace "$@"
 
-# Run reprozip pack.
-REPROZIP_PATH_FILENAME=${REPROZIP_TRACE_DIR}/neurodocker-reprozip.rpz
-echo "${NEURODOCKER_LOG_PREFIX}: packing up reprozip experiment"
-${REPROZIP_CONDA}/bin/reprozip pack -d ${REPROZIP_TRACE_DIR} ${REPROZIP_PATH_FILENAME}
-echo "${NEURODOCKER_LOG_PREFIX}: saved pack file within the container to"
-echo "${REPROZIP_PATH_FILENAME}"
+  # Run reprozip pack.
+  REPROZIP_PATH_FILENAME=${REPROZIP_TRACE_DIR}/neurodocker-reprozip.rpz
+  log_info "packing up reprozip experiment"
+  ${REPROZIP_CONDA}/bin/reprozip pack -d ${REPROZIP_TRACE_DIR} ${REPROZIP_PATH_FILENAME}
+  log_info "saved pack file within the container to"
+  echo "${REPROZIP_PATH_FILENAME}"
+}
+
+main "$@"

@@ -24,10 +24,10 @@ See https://github.com/kaczmarj/neurodocker/issues/23#issuecomment-307863219.
 
 Notes
 -----
-1. To use the reprozip trace within a Docker container, the image/container must
-   be built/run with `--security-opt seccomp:unconfined`.
+1. To use the reprozip trace within a Docker container, the image/container
+   must be built/run with `--security-opt seccomp:unconfined`.
       A. `docker build` does not allow --security-opt seccomp:unconfined on
-          macOS.
+         macOS.
 2. Docker's use of layers means that even if a smaller container is committed
    from a larger image there will be no reduction in size (the previous layers
    are preserved). There is a `--squash` option in `docker build` that will
@@ -109,11 +109,11 @@ class ReproZipMinimizer(object):
         for log in self.container.exec_run(trace_cmd, stream=True):
             log = log.decode().strip()
             logger.debug(log)
-            # TODO: improve error handling. Look into exec_inspect in docker-py.
+            # TODO: improve error handling. Look into exec_inspect in docker-py
             if (("REPROZIP" in log and "couldn't use ptrace" in log)
-                or "NEURODOCKER (in container): error" in log):
+               or ("REPROZIP" in log and "CRITICAL" in log)
+               or "NEURODOCKER (in container): error" in log):
                 raise RuntimeError("Error: {}".format(log))
-
 
         self.pack_filepath = log.split()[-1].strip()
         try:
