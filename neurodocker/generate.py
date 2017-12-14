@@ -352,7 +352,7 @@ def _add_common_dependencies(pkg_manager):
             '\n&& if [ ! -f "$ND_ENTRYPOINT" ]; then'
             "\n     echo '#!/usr/bin/env bash' >> $ND_ENTRYPOINT"
             "\n     && echo 'set +x' >> $ND_ENTRYPOINT"
-            "\n     && echo 'if [ -z \"$*\" ]; then /usr/bin/env bash; else $*; fi' >> $ND_ENTRYPOINT;"
+            "\n     && echo 'if [ -z \"$*\" ]; then /usr/bin/env bash; else "$*"; fi' >> $ND_ENTRYPOINT;"
             "\n   fi"
             "\n&& chmod -R 777 /neurodocker && chmod a+s /neurodocker")
     cmd = indent("RUN", cmd)
